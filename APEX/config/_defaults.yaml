@@ -1,0 +1,131 @@
+# APEX shared default parameters
+# -----------------------------------------------------------------------------
+# Every value below is a PROTOTYPE PLACEHOLDER taken from (or derived from the
+# ranges in) NIKA_Model_Parameters.docx and the project brief. None of them is
+# a verified lender policy or an empirically validated weight. Each bank file
+# in this folder is deep-merged on top of this file, so a bank only needs to
+# state what it changes.
+
+income_adjustment:
+  # Share of base income counted, by employment category. The informal
+  # haircut implements "count only a conservative percentage of declared
+  # income" (Model Parameters A3).
+  category_factor: {salaried: 1.0, self_employed: 0.9, informal: 0.75}
+  # Applied when no verified/documented income figure is supplied.
+  unverified_factor: 0.9
+  # Self-reported variability only adjusts income for these categories.
+  # Monthly observations, when supplied, are always used.
+  variability_applies_to: [self_employed, informal]
+  self_reported_variability_factor: {low: 1.0, medium: 0.9, high: 0.75, unknown: 0.85}
+  # CV-based factor = 1 - min(max_haircut, slope * max(0, CV - tolerance))
+  cv_haircut: {tolerance: 0.10, slope: 1.0, max_haircut: 0.40}
+  min_observation_months: 6
+
+amount:
+  income_multiple: 2.0          # x annual adjusted income (unsecured ceiling)
+  safety_buffer_min: 0.05       # A3: "haircut of about 5-10%; show a range"
+  safety_buffer_max: 0.10
+  interest_rate_low: 11.0       # % p.a. sensitivity range (A3)
+  interest_rate_base: 13.0
+  interest_rate_high: 16.0
+
+# Fictional demonstration pricing. The score bands and existing-EMI burden
+# are policy examples, not fitted to borrower outcomes or approved by a bank.
+# Adjustments are percentage points added to the selected bank's base rate,
+# then bounded by that bank's low/high example rates.
+pricing:
+  credit_score_bands:
+    - {min_score: 800, adjustment_pp: -1.0}
+    - {min_score: 750, adjustment_pp: -0.5}
+    - {min_score: 700, adjustment_pp: 0.0}
+    - {min_score: 650, adjustment_pp: 1.0}
+    - {min_score: 300, adjustment_pp: 2.0}
+  low_existing_emi_share_max: 0.15
+  low_existing_emi_adjustment_pp: -0.5
+  high_existing_emi_share_min: 0.35
+  high_existing_emi_adjustment_pp: 0.5
+
+indicators:
+  foir_amber_margin: 0.05       # FOIR within 5 pp below the cap -> amber
+  utilisation_warn: 0.30        # A2: "under 30% is a commonly cited comfort level"
+  utilisation_red: 0.90
+  lti_amber_fraction: 0.75      # LTI above 75% of the income-multiple ceiling -> amber
+  min_residual_income: 10000    # INR / month left after EMIs -> below this is amber
+  stability_green: 70
+  stability_amber: 40
+
+scoring:
+  # Illustrative weights; must sum to 1. Rationale in docs/MATHEMATICAL_MODEL.md.
+  weights:
+    affordability: 0.30
+    credit_score: 0.15
+    credit_utilisation: 0.10
+    loan_to_income: 0.10
+    income_stability: 0.15
+    residual_income: 0.10
+    documentation: 0.10
+  # Piecewise-linear curves [x, score]; flat outside the end points.
+  curves:
+    affordability: [[0.6, 100], [0.8, 85], [1.0, 60], [1.1, 20], [1.25, 0]]       # x = FOIR / FOIR cap
+    credit_score: [[600, 0], [650, 30], [700, 60], [750, 85], [800, 100]]         # x = bureau score (300-900)
+    credit_utilisation: [[0.0, 100], [0.3, 80], [0.5, 50], [0.75, 20], [1.0, 0]]  # x = utilisation
+    loan_to_income: [[0.5, 100], [0.75, 80], [1.0, 55], [1.25, 20], [1.5, 0]]     # x = LTI / income-multiple ceiling
+    residual_income: [[0.0, 0], [0.2, 40], [0.4, 75], [0.6, 100]]                 # x = residual / adjusted income
+  # A factor that applies but whose input is missing is scored at this
+  # conservative placeholder (never a favourable value) and flagged.
+  missing_factor_score: 25
+  # Share of applicable weight that must be backed by real data; below this the
+  # classification is "Insufficient information".
+  min_score_coverage: 0.75
+  likely_min: 70
+  borderline_min: 50
+  income_stability:
+    weights: {tenure: 0.50, variability: 0.35, documented_history: 0.15}
+    tenure_curve: [[0, 0], [1, 40], [2, 65], [3, 80], [5, 100]]   # years
+    cv_curve: [[0.10, 100], [0.25, 70], [0.50, 30], [0.75, 0]]
+    self_reported_score: {low: 90, medium: 60, high: 25}
+    # Left null: no explicit policy supports scoring employment category.
+    employment_category_score: null
+
+completeness:
+  required_weight: 2
+  optional_weight: 1
+
+# KYC: PAN (4th character "P" = individual). Verification status is recorded by
+# the manager from the bank's KYC system.
+kyc:
+  require_pan: true
+  allowed_holder_types: [P]
+  require_verified: true
+
+# APR (Key Fact Statement): processing fee + GST on fees + other upfront charges.
+charges:
+  default_processing_fee_pct: 2.0
+  gst_on_fees_pct: 18
+  max_apr_pct: null
+
+# Stress test and income-shortfall model (assumptions).
+stress:
+  rate_shock_bps: 200              # applied to floating-rate loans only
+  income_shock_pct: 0.10
+  max_stressed_foir_excess: 0.05   # stressed FOIR may exceed the cap by 5 pp before review
+  default_cv_by_category: {salaried: 0.05, self_employed: 0.25, informal: 0.35}
+  self_reported_cv: {low: 0.08, medium: 0.20, high: 0.40}
+  max_shortfall_probability: 0.20
+
+# An approval-probability model is shown only if it clears this gate.
+model_gate:
+  min_samples: 500
+  min_events_per_class: 50
+  min_test_auc: 0.65
+  max_test_ece: 0.05
+
+# Total bank-preference points (score rules) are capped at +/- this value.
+score_adjustment_cap: 15
+
+# Breaches within a tier become DEVIATION (approvable by the named authority)
+# instead of FAIL. Units are those of the check (FOIR fraction, score points, INR).
+deviation_matrix: {}
+
+# Bank policy rules (filters / preferences). See policy_rules.py for the schema.
+policy_rules: []

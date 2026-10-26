@@ -1,0 +1,80 @@
+# FICTIONAL DEMONSTRATION BANK. Not attributed to, or derived from, any real
+# lender. All values are prototype placeholders.
+meta:
+  bank_id: bank_c
+  display_name: "Bank C (fictional) - Flexible policy"
+  fictional: true
+  policy_version: "C-proto-0.1.0"
+  last_verified: 2026-10-24
+  product: "Unsecured personal loan (illustrative)"
+  source_note: "Fictional demonstration configuration. Placeholder values only; not a verified lender policy."
+
+eligibility:
+  min_age: 21
+  max_age_at_maturity: 65
+  min_net_monthly_income: 15000
+  accepted_employment_categories: [salaried, self_employed, informal]
+  min_employment_years: {salaried: 0.5, self_employed: 1, informal: 1}
+  credit_score: {min_score: 650, new_to_credit: accept}
+  loan_amount: {min: 25000, max: 4000000}
+  tenure_months: {min: 6, max: 84}
+  foir_cap: {salaried: 0.60, self_employed: 0.50, informal: 0.45}
+  mandatory_documents:
+    salaried: [identity, bank_statements]
+    self_employed: [identity, bank_statements]
+    informal: [identity, bank_statements]
+
+income_adjustment:
+  category_factor: {salaried: 1.0, self_employed: 0.9, informal: 0.80}
+
+amount:
+  income_multiple: 2.5
+  safety_buffer_min: 0.05
+  safety_buffer_max: 0.08
+  # Assumption: a flexible policy is modelled with higher pricing.
+  interest_rate_low: 13.0
+  interest_rate_base: 15.0
+  interest_rate_high: 19.0
+
+indicators:
+  min_residual_income: 8000
+
+scoring:
+  likely_min: 65
+  borderline_min: 45
+
+charges:
+  default_processing_fee_pct: 2.5
+  max_apr_pct: 30
+
+kyc:
+  require_verified: false   # verification may complete after the preliminary screen
+
+deviation_matrix:
+  foir:
+    - {within: 0.05, authority: "Branch Credit Manager"}
+    - {within: 0.10, authority: "Zonal Credit Head"}
+  credit_score:
+    - {within: 30, authority: "Branch Credit Manager"}
+  employment_tenure:
+    - {within: 0.5, authority: "Branch Credit Manager"}
+
+policy_rules:
+  - {id: INT-NEG, label: "Not on internal negative list", stage: "Internal checks",
+     field: internal_negative_list_hit, operator: is_false, action: hard}
+  - {id: BUR-WO, label: "No write-off or settlement in 36 months", stage: Bureau,
+     field: written_off_or_settled_36m, operator: is_false, action: deviation, authority: "Zonal Credit Head",
+     rationale: "Settled accounts may be considered with a satisfactory explanation."}
+  - {id: BUR-DPD90, label: "No 90+ DPD in 24 months", stage: Bureau,
+     field: max_dpd_24m, operator: "<", value: 90, action: hard}
+  - {id: BUR-ENQ6, label: "At most 8 enquiries in 6 months", stage: Bureau,
+     field: enquiries_6m, operator: "<=", value: 8, action: review}
+  - {id: BNK-BOUNCE, label: "At most 3 EMI/NACH bounces in 6 months", stage: "Banking behaviour",
+     field: emi_bounces_6m, operator: "<=", value: 3, action: review, on_missing: ignore}
+  - {id: PREF-REL, label: "Existing relationship customer", stage: "Internal checks",
+     field: existing_customer, operator: is_true, action: score, points: 5,
+     rationale: "Known repayment behaviour with the bank (illustrative preference)."}
+  - {id: PREF-SAL, label: "Regular salary credits observed", stage: "Banking behaviour",
+     field: salary_credit_regular, operator: is_true, action: score, points: 3}
+  - {id: PREF-BOUNCE, label: "More than 1 bounce in 6 months", stage: "Banking behaviour",
+     field: emi_bounces_6m, operator: ">", value: 1, action: score, points: -5}

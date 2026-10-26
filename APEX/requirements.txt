@@ -1,0 +1,6 @@
+streamlit>=1.46
+pandas>=2.0
+numpy>=1.26
+pydantic>=2.6
+pyyaml>=6.0
+pytest>=8.0

@@ -1,0 +1,74 @@
+# FICTIONAL DEMONSTRATION BANK. Not attributed to, or derived from, any real
+# lender. All values are prototype placeholders.
+meta:
+  bank_id: bank_a
+  display_name: "Bank A (fictional) - Conservative policy"
+  fictional: true
+  policy_version: "A-proto-0.1.0"
+  last_verified: 2026-10-24
+  product: "Unsecured personal loan (illustrative)"
+  source_note: "Fictional demonstration configuration. Placeholder values only; not a verified lender policy."
+
+eligibility:
+  min_age: 23
+  max_age_at_maturity: 58
+  min_net_monthly_income: 35000
+  accepted_employment_categories: [salaried, self_employed]
+  min_employment_years: {salaried: 2, self_employed: 3, informal: 3}
+  credit_score: {min_score: 750, new_to_credit: review}
+  loan_amount: {min: 50000, max: 1500000}
+  tenure_months: {min: 12, max: 60}
+  foir_cap: {salaried: 0.45, self_employed: 0.40, informal: 0.35}
+  mandatory_documents:
+    salaried: [identity, salary_slips, bank_statements]
+    self_employed: [identity, bank_statements, itr, gst]
+    informal: [identity, bank_statements, income_proof]
+
+income_adjustment:
+  category_factor: {salaried: 1.0, self_employed: 0.85, informal: 0.70}
+  unverified_factor: 0.85
+
+amount:
+  income_multiple: 1.5
+  safety_buffer_min: 0.08
+  safety_buffer_max: 0.10
+  interest_rate_low: 12.0
+  interest_rate_base: 14.0
+  interest_rate_high: 17.0
+
+indicators:
+  min_residual_income: 15000
+
+scoring:
+  likely_min: 75
+  borderline_min: 55
+
+charges:
+  default_processing_fee_pct: 1.5
+  max_apr_pct: 20
+
+deviation_matrix:
+  foir:
+    - {within: 0.03, authority: "Branch Credit Manager"}
+  credit_score:
+    - {within: 10, authority: "Credit Committee"}
+
+policy_rules:
+  - {id: INT-NEG, label: "Not on internal negative list", stage: "Internal checks",
+     field: internal_negative_list_hit, operator: is_false, action: hard}
+  - {id: BUR-WO, label: "No write-off or settlement in 36 months", stage: Bureau,
+     field: written_off_or_settled_36m, operator: is_false, action: hard}
+  - {id: BUR-DPD60, label: "No 60+ DPD in 24 months", stage: Bureau,
+     field: max_dpd_24m, operator: "<", value: 60, action: hard}
+  - {id: BUR-DPD30, label: "No 30+ DPD in 12 months", stage: Bureau,
+     field: max_dpd_12m, operator: "<", value: 30, action: hard}
+  - {id: BUR-ENQ3, label: "At most 3 enquiries in 3 months", stage: Bureau,
+     field: enquiries_3m, operator: "<=", value: 3, action: review,
+     rationale: "Multiple recent enquiries can indicate credit hunger."}
+  - {id: BUR-THIN, label: "Credit history of at least 12 months", stage: Bureau,
+     field: credit_history_months, operator: ">=", value: 12, action: review, on_missing: ignore,
+     rationale: "Thin-file applicants need manual review."}
+  - {id: BNK-BOUNCE, label: "No EMI/NACH bounces in 6 months", stage: "Banking behaviour",
+     field: emi_bounces_6m, operator: "==", value: 0, action: review}
+  - {id: BNK-ABB, label: "Average balance covers one EMI", stage: "Banking behaviour",
+     field: abb_to_emi, operator: ">=", value: 1.0, action: review, on_missing: ignore}

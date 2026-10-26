@@ -1,0 +1,61 @@
+# FICTIONAL DEMONSTRATION BANK. Not attributed to, or derived from, any real
+# lender. All values are prototype placeholders. FOIR caps use the
+# illustrative 50 / 45 / 40 % limits from the project brief.
+meta:
+  bank_id: bank_b
+  display_name: "Bank B (fictional) - Moderate policy"
+  fictional: true
+  policy_version: "B-proto-0.1.0"
+  last_verified: 2026-10-24
+  product: "Unsecured personal loan (illustrative)"
+  source_note: "Fictional demonstration configuration. Placeholder values only; not a verified lender policy."
+
+eligibility:
+  min_age: 21
+  max_age_at_maturity: 60
+  min_net_monthly_income: 25000
+  accepted_employment_categories: [salaried, self_employed, informal]
+  min_employment_years: {salaried: 1, self_employed: 2, informal: 2}
+  credit_score: {min_score: 700, new_to_credit: review}
+  loan_amount: {min: 50000, max: 2500000}
+  tenure_months: {min: 12, max: 60}
+  foir_cap: {salaried: 0.50, self_employed: 0.45, informal: 0.40}
+  mandatory_documents:
+    salaried: [identity, salary_slips, bank_statements]
+    self_employed: [identity, bank_statements, itr]
+    informal: [identity, bank_statements]
+
+charges:
+  max_apr_pct: 24
+
+deviation_matrix:
+  foir:
+    - {within: 0.05, authority: "Branch Credit Manager"}
+    - {within: 0.10, authority: "Regional Credit Head"}
+  credit_score:
+    - {within: 20, authority: "Branch Credit Manager"}
+  min_income:
+    - {within: 5000, authority: "Branch Credit Manager"}
+  "rule:BUR-DPD30":
+    - {within: 30, authority: "Regional Credit Head"}
+
+policy_rules:
+  - {id: INT-NEG, label: "Not on internal negative list", stage: "Internal checks",
+     field: internal_negative_list_hit, operator: is_false, action: hard}
+  - {id: BUR-WO, label: "No write-off or settlement in 36 months", stage: Bureau,
+     field: written_off_or_settled_36m, operator: is_false, action: hard}
+  - {id: BUR-DPD90, label: "No 90+ DPD in 24 months", stage: Bureau,
+     field: max_dpd_24m, operator: "<", value: 90, action: hard}
+  - {id: BUR-DPD30, label: "No 30+ DPD in 12 months", stage: Bureau,
+     field: max_dpd_12m, operator: "<", value: 30, action: hard,
+     rationale: "Recent delinquency; deviable up to 60 DPD by the Regional Credit Head."}
+  - {id: BUR-ENQ3, label: "At most 4 enquiries in 3 months", stage: Bureau,
+     field: enquiries_3m, operator: "<=", value: 4, action: review,
+     rationale: "Multiple recent enquiries can indicate credit hunger."}
+  - {id: BNK-BOUNCE, label: "At most 1 EMI/NACH bounce in 6 months", stage: "Banking behaviour",
+     field: emi_bounces_6m, operator: "<=", value: 1, action: review}
+  - {id: BNK-ABB, label: "Average balance covers one EMI", stage: "Banking behaviour",
+     field: abb_to_emi, operator: ">=", value: 1.0, action: review, on_missing: ignore}
+  - {id: PREF-REL, label: "Existing relationship customer", stage: "Internal checks",
+     field: existing_customer, operator: is_true, action: score, points: 3,
+     rationale: "Known repayment behaviour with the bank (illustrative preference)."}
