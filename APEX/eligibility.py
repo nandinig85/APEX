@@ -6,12 +6,14 @@ always yields REVIEW (flagged ``missing_info=True``), never FAIL.
 from __future__ import annotations
 
 import copy
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
 from kyc import HOLDER_TYPES, holder_type, mask_pan
+from age_math import add_months, maturity_age_years, maturity_date
 from models import (DOCUMENT_TYPES, EMPLOYMENT_LABELS, ApplicantInput, BankConfig, CheckResult,
                     CheckStatus, DocStatus, IncomeAdjustment, PanStatus)
 from policy_rules import custom_version_suffix, load_overlay, validate_config_rules
@@ -109,17 +111,27 @@ def check_min_age(a: ApplicantInput, cfg: BankConfig) -> CheckResult:
                        detail="Meets the minimum age." if ok else "Below the configured minimum age.")
 
 
-def check_age_at_maturity(a: ApplicantInput, cfg: BankConfig) -> CheckResult:
+def check_age_at_maturity(a: ApplicantInput, cfg: BankConfig, as_of: Optional[date] = None) -> CheckResult:
     e = cfg.eligibility
     thr = f"<= {e.max_age_at_maturity} years at maturity"
     label = "Maximum age at loan maturity"
     if a.age is None:
         return _missing("age_at_maturity", label, thr, "Age")
-    maturity_age = a.age + a.tenure_months / 12
-    ok = maturity_age <= e.max_age_at_maturity
-    detail = ("Loan ends within the age limit (age in completed years; verify date of birth if close)."
-              if ok else f"Loan would end at about {maturity_age:.1f} years. "
-                         f"Longest tenure within the age limit: {max(0, (e.max_age_at_maturity - a.age) * 12)} months.")
+    if a.date_of_birth is not None:
+        if as_of is None:
+            raise ValueError("assessment date required when date of birth is supplied")
+        maturity_age = maturity_age_years(a.date_of_birth, as_of, a.tenure_months)
+        ok = maturity_date(as_of, a.tenure_months) <= add_months(a.date_of_birth, e.max_age_at_maturity * 12)
+    else:
+        maturity_age = a.age + a.tenure_months / 12
+        ok = maturity_age <= e.max_age_at_maturity
+    if a.date_of_birth is not None:
+        detail = (f"Loan maturity date: {maturity_date(as_of, a.tenure_months).isoformat()}. "
+                  f"Age limit date: {add_months(a.date_of_birth, e.max_age_at_maturity * 12).isoformat()}.")
+    else:
+        detail = ("Loan ends within the age limit (age in completed years; verify date of birth if close)."
+                  if ok else f"Loan would end at about {maturity_age:.1f} years. "
+                             f"Longest tenure within the age limit: {max(0, (e.max_age_at_maturity - a.age) * 12)} months.")
     return CheckResult(key="age_at_maturity", label=label, status=CheckStatus.PASS if ok else CheckStatus.FAIL,
                        observed=f"{maturity_age:.1f} years", threshold=thr, detail=detail)
 
@@ -321,12 +333,15 @@ BUILT_IN_STAGE = {
 
 
 def run_hard_checks(a: ApplicantInput, cfg: BankConfig, income: IncomeAdjustment,
-                    foir_value: Optional[float]) -> list[CheckResult]:
+                    foir_value: Optional[float], as_of: Optional[date] = None) -> list[CheckResult]:
     """Built-in checks, tagged with their underwriting stage and (where numeric)
     the observed/threshold values that the deviation matrix needs."""
     e, cat = cfg.eligibility, a.employment_category
     numeric = {
-        "age_at_maturity": (None if a.age is None else a.age + a.tenure_months / 12, e.max_age_at_maturity, "max"),
+        "age_at_maturity": (None if a.age is None else
+                            maturity_age_years(a.date_of_birth, as_of, a.tenure_months)
+                            if a.date_of_birth is not None and as_of is not None else
+                            a.age + a.tenure_months / 12, e.max_age_at_maturity, "max"),
         "min_income": (income.base_income, e.min_net_monthly_income, "min"),
         "employment_tenure": (a.years_in_employment, e.min_employment_years.get(cat) if cat else None, "min"),
         "credit_score": (a.credit_score, e.credit_score.min_score, "min"),
@@ -335,7 +350,7 @@ def run_hard_checks(a: ApplicantInput, cfg: BankConfig, income: IncomeAdjustment
         else (None, None, None),
     }
     out = []
-    for c in _built_in(a, cfg, income, foir_value):
+    for c in _built_in(a, cfg, income, foir_value, as_of):
         upd: dict = {"stage": BUILT_IN_STAGE[c.key]}
         ov, tv, d = numeric.get(c.key, (None, None, None))
         if ov is not None and tv is not None:
@@ -345,11 +360,11 @@ def run_hard_checks(a: ApplicantInput, cfg: BankConfig, income: IncomeAdjustment
 
 
 def _built_in(a: ApplicantInput, cfg: BankConfig, income: IncomeAdjustment,
-              foir_value: Optional[float]) -> list[CheckResult]:
+              foir_value: Optional[float], as_of: Optional[date] = None) -> list[CheckResult]:
     return [
         check_kyc(a, cfg),
         check_min_age(a, cfg),
-        check_age_at_maturity(a, cfg),
+        check_age_at_maturity(a, cfg, as_of),
         check_min_income(a, cfg, income),
         check_employment_category(a, cfg),
         check_employment_tenure(a, cfg),

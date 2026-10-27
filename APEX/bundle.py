@@ -13,16 +13,16 @@ ZIP_NAME = "APEX_loan_decision_support.zip"
 # Only reviewed source files are shipped. A new file in the project directory
 # must be deliberately added here before it can appear in a downloadable ZIP.
 PACKAGE_FILES = (
-    ".gitignore", ".streamlit/config.toml", "README.md", "advisor.py", "app.py", "approval_model.py",
-    "bundle.py", "calculations.py", "eligibility.py", "engine.py", "install_and_run.bat",
+    ".gitignore", ".streamlit/config.toml", "README.md", "advisor.py", "age_math.py", "app.py", "approval_model.py",
+    "bundle.py", "calculations.py", "data_lab.py", "demo_check.py", "eligibility.py", "engine.py", "install_and_run.bat",
     "install_and_run.sh", "kyc.py", "models.py", "policy_rules.py", "predictors.py",
-    "pricing.py", "profiles.py", "pytest.ini", "reports.py", "requirements.txt", "scoring.py",
+    "pricing.py", "profiles.py", "pytest.ini", "reports.py", "requirements.txt", "requirements-dev.txt", "scoring.py",
     "synthetic_history.py", "config/_defaults.yaml", "config/bank_a_conservative.yaml",
     "config/bank_b_moderate.yaml", "config/bank_c_flexible.yaml",
-    "docs/APEX_HANDBOOK.md", "docs/MATHEMATICAL_MODEL.md",
-    "tests/conftest.py", "tests/test_advisor.py", "tests/test_bundle.py",
+    "docs/APEX_HANDBOOK.md", "docs/MATHEMATICAL_MODEL.md", "docs/PILOT_READINESS.md",
+    "tests/conftest.py", "tests/test_advisor.py", "tests/test_age_math.py", "tests/test_bundle.py",
     "tests/test_calculations.py", "tests/test_eligibility_and_config.py",
-    "tests/test_extensions.py", "tests/test_pricing.py", "tests/test_profiles.py",
+    "tests/test_extensions.py", "tests/test_pilot_safety.py", "tests/test_data_lab.py", "tests/test_pricing.py", "tests/test_profiles.py",
     "tests/test_scoring_and_logic.py",
 )
 EXECUTABLE = {"install_and_run.sh"}

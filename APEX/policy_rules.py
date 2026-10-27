@@ -116,13 +116,14 @@ FIELD_REGISTRY: dict[str, FieldSpec] = {
     "abb_to_emi": FieldSpec("Average balance / EMI", "number", "derived", "x"),
 }
 
-# Protected characteristics and well-known proxies. Matching is by substring
-# on the normalised field name, so variants such as "caste_category" or
-# "pin_code" are also blocked.
-PROHIBITED_TERMS = ("gender", "sex", "religion", "caste", "community", "tribe", "marital", "spouse",
-                    "pincode", "pin_code", "postal", "zip", "district", "locality", "region", "address",
-                    "nationality", "ethnic", "race", "disab", "pregnan", "orientation", "political",
-                    "language", "name", "surname", "father", "photo", "pan")
+# Match whole field-name tokens. Substrings such as "pan" in "company" and
+# "name" in "rename" must not block otherwise permissible fields.
+PROHIBITED_TOKENS = {"gender", "sex", "religion", "caste", "community", "tribe", "marital", "spouse",
+                     "pincode", "postal", "zip", "district", "locality", "region", "address",
+                     "nationality", "ethnic", "race", "disability", "disabled", "pregnancy", "pregnant",
+                     "orientation", "political", "language", "name", "surname", "father", "mother",
+                     "photo", "pan", "aadhaar"}
+PROHIBITED_FIELDS = {"pin_code", "postal_code", "zip_code", "full_name", "first_name", "last_name"}
 # PAN is an identifier for KYC only - filtering on it would amount to a hidden blacklist.
 
 OPERATORS_BY_KIND = {
@@ -137,11 +138,12 @@ OPERATORS_BY_KIND = {
 # --------------------------------------------------------------------------
 def check_field_allowed(field: str) -> FieldSpec:
     norm = field.lower().replace("-", "_").replace(" ", "_")
-    for term in PROHIBITED_TERMS:
-        if term in norm:
-            raise FairnessError(
-                f"Field '{field}' refers to a protected characteristic or a known proxy ('{term}'). "
-                "Rules on such attributes are not permitted (RBI Fair Practices Code; APEX guardrails).")
+    blocked = norm if norm in PROHIBITED_FIELDS else next(
+        (term for term in norm.split("_") if term in PROHIBITED_TOKENS), None)
+    if blocked:
+        raise FairnessError(
+            f"Field '{field}' refers to a protected characteristic or a known proxy ('{blocked}'). "
+            "Rules on such attributes are not permitted by APEX guardrails.")
     if field not in FIELD_REGISTRY:
         raise RuleError(f"Unknown field '{field}'. Allowed fields: {', '.join(sorted(FIELD_REGISTRY))}")
     return FIELD_REGISTRY[field]

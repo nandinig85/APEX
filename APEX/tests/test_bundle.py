@@ -11,7 +11,9 @@ def test_bundle_contains_project_and_excludes_local_state():
         names = z.namelist()
         assert z.testzip() is None
         sh = z.getinfo("APEX/install_and_run.sh")
-    for must in ("APEX/.gitignore", "APEX/app.py", "APEX/advisor.py", "APEX/requirements.txt", "APEX/install_and_run.bat",
+    for must in ("APEX/.gitignore", "APEX/app.py", "APEX/advisor.py", "APEX/age_math.py", "APEX/data_lab.py",
+                 "APEX/demo_check.py",
+                 "APEX/requirements.txt", "APEX/requirements-dev.txt", "APEX/install_and_run.bat",
                  "APEX/install_and_run.sh", "APEX/docs/APEX_HANDBOOK.md", "APEX/config/_defaults.yaml",
                  "APEX/tests/test_advisor.py", "APEX/.streamlit/config.toml"):
         assert must in names

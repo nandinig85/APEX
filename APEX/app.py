@@ -7,7 +7,7 @@ Run with:  streamlit run app.py
 from __future__ import annotations
 
 import html
-import io
+import hashlib
 import json
 import re
 from datetime import date, datetime, timezone
@@ -21,10 +21,12 @@ from pydantic import ValidationError
 import approval_model as am
 import bundle
 import calculations as calc
+from data_lab import (batch_compare, synthetic_sample_csv, synthetic_sample_xlsx, template_csv, template_xlsx,
+                      validate_csv, validate_xlsx, validated_history)
 from advisor import advise
 from eligibility import CONFIG_DIR, available_banks
 from engine import DISCLAIMER, assess, compute_capacity, inr
-from kyc import HOLDER_TYPES, mask_pan
+from kyc import HOLDER_TYPES, demo_key_in_use, mask_pan, pan_key
 from models import (DOCUMENT_TYPES, EMPLOYMENT_LABELS, STAGES, ApplicantInput, Assessment, CheckStatus,
                     Classification, DocStatus, EmployerCategory, EmploymentCategory, FactorStatus,
                     IncomeVariability, PanStatus, PolicyRule)
@@ -36,10 +38,15 @@ from reports import customer_letter, report_json, report_markdown
 from synthetic_history import generate
 
 st.set_page_config(page_title="APEX - Loan Decision Support", page_icon="▲", layout="wide")
+try:
+    pan_key()  # Refuse to start a pilot sandbox with the public demonstration key.
+except (RuntimeError, ValueError) as exc:
+    st.error(str(exc))
+    st.stop()
 
 PAGES = ["Customer information", "Assessment dashboard", "Decision & advice", "Explanation & diagnosis",
-         "Loan simulator", "Reports & customer letter", "Policy studio", "Model lab", "Guide"]
-PAGE_ICON = dict(zip(PAGES, ["📝", "📊", "🎯", "🔍", "🧮", "📄", "⚙️", "🧪", "📘"]))
+         "Loan simulator", "Reports & customer letter", "Policy studio", "Model lab", "Guide", "Data lab"]
+PAGE_ICON = dict(zip(PAGES, ["📝", "📊", "🎯", "🔍", "🧮", "📄", "⚙️", "🧪", "📘", "🗂️"]))
 COLORS = {"green": "#15803d", "amber": "#b45309", "red": "#b91c1c", "grey": "#64748b", "info": "#1d4ed8",
           "purple": "#7c3aed"}
 TINT = {"green": "#ecfdf3", "amber": "#fff7ed", "red": "#fef2f2", "grey": "#f1f5f9", "info": "#eff6ff",
@@ -138,7 +145,7 @@ ss = st.session_state
 # Form state <-> ApplicantInput
 # --------------------------------------------------------------------------
 def default_state() -> dict:
-    d = dict(in_id="NEW-0001", in_age=None, in_cat="Not provided", in_amount=500_000.0, in_tenure=36,
+    d = dict(in_id="NEW-0001", in_age=None, in_dob=None, in_cat="Not provided", in_amount=500_000.0, in_tenure=36,
              in_rate=float(next(iter(BANKS.values())).amount.interest_rate_base),
              in_purpose="", in_income=None, in_years=None, in_var="unknown", in_verified=None,
              in_obs="", in_cont="Not recorded", in_other=None, in_emis=None, in_loans=None, in_card="Not recorded",
@@ -166,7 +173,8 @@ def applicant_to_state(a: ApplicantInput) -> None:
     else:
         mode = SCORE_MODES[0]
     ss.update(dict(
-        in_id=a.applicant_id, in_age=a.age, in_cat=a.employment_category.value if a.employment_category else "Not provided",
+        in_id=a.applicant_id, in_age=a.age, in_dob=a.date_of_birth,
+        in_cat=a.employment_category.value if a.employment_category else "Not provided",
         in_amount=float(a.requested_amount), in_tenure=a.tenure_months, in_rate=float(a.annual_interest_rate),
         in_purpose=a.loan_purpose or "", in_income=f(a.net_monthly_income), in_years=f(a.years_in_employment),
         in_var=a.income_variability.value, in_verified=f(a.verified_monthly_income),
@@ -194,7 +202,7 @@ def state_to_applicant() -> ApplicantInput:
         raise ValueError("Monthly income observations must be numbers separated by commas")
     mode = ss.in_score_mode
     data = dict(
-        applicant_id=ss.in_id.strip(), age=ss.in_age,
+        applicant_id=ss.in_id.strip(), age=ss.in_age, date_of_birth=ss.in_dob,
         employment_category=None if ss.in_cat == "Not provided" else ss.in_cat,
         requested_amount=ss.in_amount, tenure_months=ss.in_tenure, annual_interest_rate=ss.in_rate,
         loan_purpose=ss.in_purpose or None, net_monthly_income=ss.in_income, years_in_employment=ss.in_years,
@@ -281,6 +289,8 @@ with st.sidebar:
     st.markdown('<div class="ax-brand"><div class="ax-logo">▲</div><div><div class="ax-word">APEX</div>'
                 '<div class="ax-tag">Loan eligibility &amp; decision support</div></div></div>',
                 unsafe_allow_html=True)
+    if demo_key_in_use():
+        st.warning("DEMO KEY in use. Synthetic data only.")
     bank_id = st.selectbox("Bank configuration", list(BANKS), key="bank_id",
                            format_func=lambda b: BANKS[b].meta.display_name)
     cfg = BANKS[bank_id]
@@ -440,6 +450,9 @@ def page_input():
     c2.number_input("Age * (completed years)", min_value=18, max_value=100, step=1, key="in_age")
     c3.selectbox("Employment category *", CAT_OPTIONS, key="in_cat",
                  format_func=lambda v: EMPLOYMENT_LABELS[EmploymentCategory(v)] if v != "Not provided" else v)
+    st.date_input("Date of birth (optional; used for an exact maturity-age check)",
+                  value=None, max_value="today", key="in_dob")
+    st.caption("If a date of birth is entered, APEX calculates completed age from it for this assessment.")
     c1, c2, c3 = st.columns(3)
     c1.number_input("Requested loan amount (INR) *", min_value=1.0, step=10_000.0, format="%.0f", key="in_amount")
     c2.number_input("Requested tenure (months) *", min_value=1, max_value=480, step=6, key="in_tenure")
@@ -578,7 +591,7 @@ def probability_panel(r: Assessment) -> None:
                 st.warning("Hard criteria failed (" + ", ".join(fails) + "). The rule outcome stands; the model "
                            "does not see policy filters and cannot override them.")
             if p.synthetic:
-                st.error("Model trained on SYNTHETIC history - demonstration only, not an estimate for real decisions.")
+                st.error("Model trained on SYNTHETIC or DUMMY history - demonstration only, not an estimate for real decisions.")
             if p.policy_changed_since_training:
                 st.warning(f"Policy changed since training ({p.policy_version_at_training}); retrain the model.")
             st.caption(f"Model {p.model_id} - {p.n_train} training cases - out-of-time AUC {p.test_auc:.3f} - "
@@ -1286,7 +1299,7 @@ def show_model(m: dict, title: str):
     mt = m["metrics"]
     st.markdown(f"#### {title}")
     if m["synthetic"]:
-        st.error("Trained on SYNTHETIC history. Its probabilities only reproduce an invented decision process.")
+        st.error("Trained on SYNTHETIC or DUMMY history. Its probabilities describe demo decisions only.")
     if m["gate"]["passed"]:
         st.success("Passed the bank's validation gate.")
     else:
@@ -1360,7 +1373,12 @@ def page_model():
                      ml_src="Synthetic history (demo)", ml_cal="platt").items():
         ss.setdefault(k, v)
     st.subheader("Train a new model")
-    src = st.radio("Training data", ["Synthetic history (demo)", "Upload bank history (CSV)"], horizontal=True,
+    sources = ["Synthetic history (demo)", "Upload dummy history (CSV)"]
+    if ss.get("dl_history") is not None:
+        sources.append("Validated dummy file from Data lab")
+    if ss.ml_src not in sources:
+        ss.ml_src = sources[0]
+    src = st.radio("Training data", sources, horizontal=True,
                    key="ml_src")
     history, synthetic, source = None, True, "synthetic"
     if src.startswith("Synthetic"):
@@ -1369,19 +1387,26 @@ def page_model():
         seed = c2.number_input("Random seed", 0, 10_000, key="ml_seed")
         history = generate(cfg, n=int(n), seed=int(seed))
         st.caption("Synthetic applicants with an invented decision process (see synthetic_history.py).")
+    elif src == "Validated dummy file from Data lab":
+        history = ss.dl_history
+        synthetic, source = True, "Validated dummy file from Data lab"
+        st.caption(f"{len(history)} validated dummy rows. Raw PAN was removed before model training.")
     else:
-        template = generate(cfg, n=5, seed=1).to_csv(index=False)
-        st.download_button("Download CSV template", template, file_name="apex_history_template.csv", mime="text/csv")
-        up = st.file_uploader("Historical decisions CSV (decision = 1 approved / 0 declined, decision_date)",
-                              type="csv")
+        st.download_button("Download CSV template", template_csv(), file_name="apex_history_template.csv",
+                           mime="text/csv")
+        up = st.file_uploader("Dummy historical decisions CSV in the complete Data lab template", type="csv")
         if up is not None:
             try:
-                history = pd.read_csv(io.BytesIO(up.getvalue()))
-                synthetic, source = False, f"uploaded history ({up.name})"
-                st.caption(f"{len(history)} rows loaded. PAN columns, if present, are ignored.")
-                history = history.drop(columns=[c for c in history.columns if c.lower() == "pan"])
-            except Exception as e:  # noqa: BLE001
-                st.error(f"Could not read the file: {e}")
+                checked = validate_csv(up.getvalue(), cfg=cfg)
+                if checked.errors:
+                    st.error(f"{len({e['row'] for e in checked.errors})} rows have validation errors. "
+                             "Use Data lab to review and download the row-level report.")
+                else:
+                    history = validated_history(checked)
+                    synthetic, source = True, "Validated uploaded dummy history"
+                    st.caption(f"{len(history)} validated dummy rows. Raw PAN was removed before training.")
+            except ValueError as e:
+                st.error(f"Could not validate the dummy file: {e}")
     c1, c2, c3, c4, c5 = st.columns(5)
     n_bins = c1.slider("Bins per feature", 3, 10, key="ml_bins")
     l2 = c2.select_slider("L2 penalty", [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0], key="ml_l2")
@@ -1405,6 +1430,99 @@ def page_model():
             st.rerun()
 
 
+@st.cache_data(show_spinner=False, max_entries=3)
+def _sample_data(bank_id: str, policy_version: str, n: int) -> bytes:
+    return synthetic_sample_csv(BANKS[bank_id], n)
+
+
+@st.cache_data(show_spinner=False, max_entries=2)
+def _sample_excel(bank_id: str, policy_version: str, n: int) -> bytes:
+    return synthetic_sample_xlsx(BANKS[bank_id], n)
+
+
+def page_data_lab():
+    hero("Data lab", "Validate and compare synthetic or bank-supplied dummy decisions locally")
+    st.warning("Pilot intake is a prototype. Use synthetic or bank-supplied dummy data only. "
+               "Historical decision agreement is not a measure of credit accuracy.")
+    c1, c2 = st.columns(2)
+    c1.download_button("Download CSV template", template_csv(), file_name="apex_dummy_data_template.csv",
+                       mime="text/csv")
+    c1.download_button("Download Excel template", template_xlsx(), file_name="apex_dummy_data_template.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    n = c2.selectbox("Synthetic example rows", [200, 5000])
+    st.download_button("Download synthetic example CSV", _sample_data(bank_id, cfg.meta.policy_version, n),
+                       file_name=f"apex_synthetic_{n}.csv", mime="text/csv")
+    st.download_button("Download synthetic example Excel", _sample_excel(bank_id, cfg.meta.policy_version, n),
+                       file_name=f"apex_synthetic_{n}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    uploaded = st.file_uploader("Upload a dummy-data CSV or Excel file in the template format",
+                                type=["csv", "xlsx"], key="dl_upload")
+    unit_name = st.selectbox("Units used for money columns", ["Rupees", "Thousands of rupees", "Lakhs"],
+                             help="Conversion is explicit; APEX does not guess units from the file.")
+    multiplier = {"Rupees": 1, "Thousands of rupees": 1_000, "Lakhs": 100_000}[unit_name]
+    if uploaded is None:
+        st.info("Start with the synthetic example to see validation and batch comparison.")
+        return
+    uploaded_bytes = uploaded.getvalue()
+    try:
+        intake = (validate_xlsx(uploaded_bytes, multiplier, cfg) if uploaded.name.lower().endswith(".xlsx")
+                  else validate_csv(uploaded_bytes, multiplier, cfg))
+    except ValueError as exc:
+        st.error(f"File rejected: {exc}")
+        return
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Rows in file", intake.total_rows)
+    c2.metric("Valid rows", len(intake.valid))
+    c3.metric("Excluded rows", len({e["row"] for e in intake.errors}))
+    if intake.errors:
+        st.markdown("**Row-level validation errors** (no applicant values are included)")
+        errors = pd.DataFrame(intake.errors)
+        st.dataframe(errors.head(100), hide_index=True, width="stretch")
+        st.download_button("Download all row errors", errors.to_csv(index=False),
+                           file_name="apex_dummy_data_errors.csv", mime="text/csv")
+    if not intake.valid:
+        return
+    key = (hashlib.sha256(uploaded_bytes).hexdigest(), multiplier, bank_id, cfg.meta.policy_version)
+    if st.button("Assess valid rows and compare decisions", type="primary"):
+        with st.spinner("Assessing valid rows under the selected fictional bank policy..."):
+            ss.dl_results = (key, batch_compare(intake, cfg))
+            ss.dl_history = validated_history(intake)
+    saved = ss.get("dl_results")
+    if not saved or saved[0] != key:
+        return
+    result = saved[1]
+    st.subheader("Classification compared with recorded decisions")
+    st.caption("This describes agreement on the rows supplied. It is not model accuracy: historical "
+               "decisions are selective, and APEX review categories do not map to approval or decline.")
+    st.dataframe(pd.crosstab(result["apex_classification"], result["bank_decision"]), width="stretch")
+    st.metric("Rows needing manual review", int((result["agreement"] == "manual review / not comparable").sum()))
+    st.markdown("**Different-direction cases and their checks**")
+    differences = result[result["agreement"] == "different direction"]
+    if differences.empty:
+        st.caption("None in this file.")
+    else:
+        st.dataframe(differences[["source_row", "applicant_id", "bank_decision", "apex_classification",
+                                  "fail_checks", "review_checks"]].head(100), hide_index=True, width="stretch")
+    st.markdown("**Batch summary**")
+    st.write({"classification_mix": result["apex_classification"].value_counts().to_dict(),
+              "rows_with_missing_checks": int((result["missing_checks"] > 0).sum()),
+              "median_adjusted_income_INR": result["adjusted_income"].median(),
+              "median_FOIR": result["foir"].median()})
+    check_rates = []
+    for column, label in (("fail_checks", "FAIL"), ("review_checks", "REVIEW or DEVIATION")):
+        counts = result[column].str.split("; ").explode()
+        for check, count in counts[counts.ne("")].value_counts().items():
+            check_rates.append({"check": check, "status": label,
+                                "cases": int(count), "share_of_valid_rows": count / len(result)})
+    if check_rates:
+        st.markdown("**Per-check rates**")
+        st.dataframe(pd.DataFrame(check_rates), hide_index=True, width="stretch")
+    st.markdown("**Income and FOIR distribution of valid rows**")
+    st.dataframe(result[["adjusted_income", "foir"]].describe(percentiles=[.1, .25, .5, .75, .9]),
+                 width="stretch")
+
+
 {PAGES[0]: page_input, PAGES[1]: page_assessment, PAGES[2]: page_decision, PAGES[3]: page_explain,
  PAGES[4]: page_simulator, PAGES[5]: page_report, PAGES[6]: page_policy, PAGES[7]: page_model,
- PAGES[8]: page_guide}[ss.page]()
+ PAGES[8]: page_guide, PAGES[9]: page_data_lab}[ss.page]()
+st.caption("Prototype. Synthetic or dummy data. Not a credit decision.")

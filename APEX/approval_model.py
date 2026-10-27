@@ -541,7 +541,8 @@ def predict(model: dict, r: Assessment, cfg: BankConfig) -> Optional[Probability
     return ProbabilityEstimate(
         probability=p, lower_95=min(lo, hi), upper_95=max(lo, hi),
         scorecard_points=sc["offset"] + sc["factor"] * z, model_id=model["model_id"],
-        trained_on=("SYNTHETIC history (demonstration only)" if model["synthetic"] else model["data_source"]),
+        trained_on=(f"{model['data_source']} (demonstration only)" if model["synthetic"]
+                    else model["data_source"]),
         synthetic=model["synthetic"], n_train=model["n_train"], test_auc=model["metrics"]["test_auc"],
         test_ece=model["metrics"]["test_ece"], policy_version_at_training=model["policy_version_at_training"],
         policy_changed_since_training=model["policy_version_at_training"] != cfg.meta.policy_version,

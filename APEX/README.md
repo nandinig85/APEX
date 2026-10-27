@@ -35,6 +35,8 @@ An approval model stops showing probabilities when the bank policy version chang
   inside the app on the **Guide** page.
 * [`docs/MATHEMATICAL_MODEL.md`](docs/MATHEMATICAL_MODEL.md): every formula with derivations, edge cases
   and worked examples. The decision advisor and fictional rate rule are in §16–17.
+* [`docs/PILOT_READINESS.md`](docs/PILOT_READINESS.md): what works in this first draft and what is still
+  required before any real bank pilot.
 
 ## What is new in v3
 
@@ -109,7 +111,7 @@ Open http://localhost:8501. To try it quickly, pick a **synthetic profile** in t
 
 | Page | What it shows |
 |---|---|
-| 📝 Customer information | A validated input form. Leave unknown fields empty: missing data gives REVIEW, never FAIL. |
+| 📝 Customer information | A validated input form. Optional birth date gives an exact maturity-age check; otherwise entered age is used. Leave unknown fields empty: missing data gives REVIEW, never FAIL. |
 | 📊 Assessment dashboard | The classification with a score gauge, a decision snapshot, the underwriting pipeline, the approval probability (only from a validated model), metric cards, the checks table, and a comparison across banks. |
 | 🎯 Decision & advice | Conditional affordability ceiling, fictional rate suggestion with its policy factors, a button to reassess at that rate, limits, options, improvement plan and customer letter. |
 | 🔍 Explanation & diagnosis | Classification reasons, findings, a "points lost" chart, income adjustment, the stress model, completeness, and next steps. |
@@ -118,10 +120,30 @@ Open http://localhost:8501. To try it quickly, pick a **synthetic profile** in t
 | ⚙️ Policy studio | Add, preview, disable or delete bank rules and preferences; view the deviation matrix and the audit log. |
 | 🧪 Model lab | Train, validate and activate an approval scorecard on synthetic or uploaded history. |
 | 📘 Guide | The handbook. |
+| 🗂️ Data lab | Download complete dummy-data CSV or Excel templates and synthetic samples; validate rows, batch-assess valid applicants and compare classifications with recorded decisions. |
+
+The Data lab runs locally and does not save uploaded files. It excludes invalid rows and offers an error
+report without applicant values. It checks the selected product and policy version, and excludes duplicate
+application IDs. Excel formulas are rejected; paste values into the template. Its comparison shows
+**agreement, not accuracy**. Validated rows can then be used in the Model lab without raw PAN. Column
+mapping, persistent data storage and reviewed bank-policy import remain future pilot work. Do not upload
+real customer data to this prototype or its GitHub repository.
+
+## Check the demo before presenting
+
+```bash
+python demo_check.py
+```
+
+This runs the same 31 synthetic profiles under all three fictional banks, checks repeatability and
+rate arithmetic, checks that raw PAN does not enter JSON reports, and validates and compares 5,000
+synthetic history rows. It writes no data or model files. The check does not establish real-world lending
+accuracy or fairness.
 
 ## Run the tests
 
 ```bash
+python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
@@ -144,6 +166,8 @@ The suite covers:
   * that the customer letter never contains the PAN or the score.
 * fictional rate suggestions: visible factor arithmetic, bank bounds, missing-data blockers and stability
   when the manager changes the assumed scenario rate.
+* PAN HMAC, pilot-key enforcement, raw-PAN exclusion from exports, safe rule-field matching, exact
+  birth-date maturity boundaries, and dummy-data CSV/Excel validation and comparison.
 
 ## Project layout
 
@@ -156,6 +180,9 @@ scoring.py             Sub-scores, weighted readiness, completeness, classificat
 engine.py              assess(): orchestrates one assessment
 advisor.py             advise(): maximum amount, limits, counter-offers, why / why not, improvement plan
 pricing.py             Transparent fictional rate policy and its explanation
+data_lab.py            Local dummy-data CSV/Excel validation, batch assessment and comparison
+age_math.py            Exact completed-age and maturity-date calculations
+demo_check.py           Repeatable synthetic demo acceptance check
 reports.py             Manager report, JSON and customer letter
 policy_rules.py        Bank/custom rules, fairness guard, deviation matrix, overlays and audit log
 approval_model.py      Calibrated logistic scorecard: binning, IRLS, calibration, validation, prediction
@@ -166,11 +193,20 @@ profiles.py            30 synthetic borrower profiles + the worked example
 config/                _defaults.yaml and fictional bank_a / bank_b / bank_c configurations
 config/overlays/       Custom rules saved from the Policy studio (+ audit_log.jsonl), created on first save
 model_store/           Activated approval models (JSON), created on first activation
+data/                  Reserved for future local pilot data; excluded from Git and the project ZIP
 .streamlit/config.toml UI theme
 docs/                  APEX_HANDBOOK.md, MATHEMATICAL_MODEL.md
 tests/                 pytest suite
 bundle.py              ZIP packaging from a reviewed file manifest
 ```
+
+## PAN key for a pilot sandbox
+
+In the fictional demo, APEX displays **DEMO KEY** when no private PAN key is configured. That key is
+only for synthetic identifiers. Setting `APEX_MODE=pilot_sandbox` requires a private `APEX_PAN_SALT`
+environment variable; otherwise APEX refuses to start. This is a key-safety guard, not a complete
+bank-policy pilot mode. PAN de-duplication uses HMAC-SHA-256, and the raw PAN remains only in the
+server-side session during an assessment.
 
 ## Customising a bank
 

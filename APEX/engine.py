@@ -12,7 +12,7 @@ model. The only external field is the timestamp, which callers may pass.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 import calculations as calc
@@ -23,6 +23,7 @@ from models import (DOCUMENT_TYPES, STAGES, ApplicantInput, AprResult, Assessmen
                     StageSummary, StressResult)
 from policy_rules import apply_deviation_matrix, run_policy_rules, total_adjustment
 from predictors import NullPredictor, OutcomePredictor
+from age_math import completed_years, maximum_tenure, maturity_age_years
 from scoring import classify, data_completeness, factor_inputs, income_stability, readiness
 
 DISCLAIMER = (
@@ -189,6 +190,13 @@ def pipeline_summary(checks: list[CheckResult]) -> list[StageSummary]:
 def assess(a: ApplicantInput, cfg: BankConfig, timestamp: Optional[str] = None, use_model: bool = True,
            predictor: Optional[OutcomePredictor] = None) -> Assessment:
     ts = timestamp or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    as_of = None
+    if a.date_of_birth is not None:
+        try:
+            as_of = date.fromisoformat(ts[:10])
+        except ValueError as exc:
+            raise ValueError("ISO assessment timestamp required when date of birth is supplied") from exc
+        a = a.model_copy(update={"age": completed_years(a.date_of_birth, as_of)})
     ind = cfg.indicators
     cat = a.employment_category
 
@@ -196,8 +204,10 @@ def assess(a: ApplicantInput, cfg: BankConfig, timestamp: Optional[str] = None, 
     income = calc.adjust_income(a, cfg.income_adjustment)
     adj = income.adjusted_income
     emi = calc.emi_breakdown(a.requested_amount, a.annual_interest_rate, a.tenure_months)
-    tenure_cap = calc.effective_tenure_cap(a.age, cfg.eligibility.max_age_at_maturity,
-                                           int(cfg.eligibility.tenure_months.max))
+    tenure_cap = (maximum_tenure(a.date_of_birth, as_of, cfg.eligibility.max_age_at_maturity,
+                                 int(cfg.eligibility.tenure_months.max)) if a.date_of_birth is not None else
+                  calc.effective_tenure_cap(a.age, cfg.eligibility.max_age_at_maturity,
+                                             int(cfg.eligibility.tenure_months.max)))
     existing = a.existing_monthly_emis
     foir_value = calc.foir(existing, emi.emi, adj) if adj is not None and existing is not None else None
     utilisation = None
@@ -225,12 +235,14 @@ def assess(a: ApplicantInput, cfg: BankConfig, timestamp: Optional[str] = None, 
         "shortfall_probability": stress.shortfall_probability,
         "documentation_share": doc_factor[1] / 100 if doc_factor[1] is not None else None,
         "data_completeness": completeness.weighted_score,
-        "age_at_maturity": None if a.age is None else a.age + a.tenure_months / 12,
+        "age_at_maturity": (None if a.age is None else
+                            maturity_age_years(a.date_of_birth, as_of, a.tenure_months)
+                            if a.date_of_birth is not None else a.age + a.tenure_months / 12),
         "apr_effective": apr_res.apr_effective,
         "abb_to_emi": (a.avg_monthly_balance / emi.emi) if a.avg_monthly_balance is not None and emi.emi else None,
     })
     rule_checks, adjustments, rule_notes = run_policy_rules(cfg, ctx, cat)
-    checks = run_hard_checks(a, cfg, income, foir_value) + [check_stress(a, cfg, stress)] + rule_checks
+    checks = run_hard_checks(a, cfg, income, foir_value, as_of) + [check_stress(a, cfg, stress)] + rule_checks
     checks = apply_deviation_matrix(checks, cfg)
     checks.sort(key=lambda c: STAGES.index(c.stage) if c.stage in STAGES else len(STAGES))
 

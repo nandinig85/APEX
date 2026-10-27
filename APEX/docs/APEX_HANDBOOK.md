@@ -60,7 +60,8 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Open http://localhost:8501. To check the installation, run `python -m pytest -q`; every test should pass.
+Open http://localhost:8501. To check the demo, run `python demo_check.py`. For the automated suite,
+install `requirements-dev.txt` and run `python -m pytest -q`.
 
 ## 1.2 The screen
 
@@ -68,7 +69,7 @@ Open http://localhost:8501. To check the installation, run `python -m pytest -q`
   * **Bank configuration**: Bank A (conservative), B (moderate) or C (flexible). Each page recalculates
     immediately for the selected bank.
   * Policy version, last-verified date, the number of custom rules and the model status.
-  * **Navigate**: the nine pages.
+  * **Navigate**: the ten pages.
   * **Synthetic profile** and **Load profile**: 30 test customers plus the worked example, for training and
     demonstrations.
 * **Main area**: each page opens with a header strip showing the applicant ID, the request and the
@@ -77,7 +78,8 @@ Open http://localhost:8501. To check the installation, run `python -m pytest -q`
 ## 1.3 A typical customer meeting, step by step
 
 1. **Select the bank configuration** in the sidebar.
-2. **Customer information**: enter what the customer has shared. Leave anything unknown empty: APEX
+2. **Customer information**: enter what the customer has shared. Add the optional birth date for an exact
+   maturity-age check; APEX derives completed age from it. Leave anything unknown empty: APEX
    reports it as *missing*, never as a failure. Tick PAN consent before typing the PAN.
 3. Click **Save and assess**. The **Assessment dashboard** opens.
 4. Read the **classification banner** and the **decision snapshot** ("Up to INR 6,35,000 over 48 months
@@ -168,9 +170,10 @@ of discrimination, and APEX refuses such rules with an explanation.
 
 ## 1.7 Training the approval model (Model lab)
 
-1. Choose the data: **Synthetic history (demo)**, or **Upload bank history (CSV)**. Download the template
-   to see the required columns: the APEX inputs, `decision` (1 = approved, 0 = declined) and
-   `decision_date`.
+1. Choose **Synthetic history (demo)**, **Upload dummy history (CSV)**, or a validated dummy file from
+   the **Data lab**. The upload uses the complete Data lab template: APEX inputs, `decision`
+   (1 = approved, 0 = declined), `decision_date` and optional metadata. Invalid rows must be reviewed
+   in the Data lab before training. Raw PAN is removed from the training history.
 2. Set the bins, the L2 penalty, the calibration method, the PDO and the base score. The defaults are
    sensible.
 3. Click **Train model**. APEX splits the history chronologically (60 / 20 / 20), fits the scorecard,
@@ -689,3 +692,35 @@ the case is Likely. The same customer gets different, explainable answers from d
 * **Actionable:** every concern has a matching option or improvement step where one exists.
 * **Respectful:** plain language and no internal scores in customer documents. Missing information is
   described as something to provide, not as a fault.
+
+# Part 5 – Dummy-data lab for pilot preparation
+
+## 5.1 Current workflow
+
+The **Data lab** page provides CSV and Excel templates with every `ApplicantInput` field and a recorded decision,
+decision date and optional pilot metadata. It also generates a repeatable synthetic sample, including a
+5,000-row option. No generated values represent a real bank's policy or customer outcomes.
+
+Upload a synthetic or bank-supplied **dummy** CSV or Excel file. Excel formulas are rejected; paste values.
+Choose the monetary unit explicitly. The validator
+checks the complete template schema, field types, ranges, cross-field consistency and selected privacy
+patterns. It excludes invalid rows without repairing them and offers a downloadable error report that
+contains row numbers, field names and error categories, but no applicant values. The raw file stays in
+the local Streamlit session. A supplied PAN is used transiently for validation and held as a secret;
+the Data lab computes its HMAC and does not include raw PAN in comparison or Model lab output.
+
+The batch action assesses valid rows under the selected **fictional** bank configuration. It shows the
+classification by recorded decision, different-direction cases with their checks, per-check rates,
+missing-information counts, and income and FOIR distributions. The comparison describes *agreement*
+with recorded decisions, not accuracy or default risk. Borderline and insufficient-information cases
+remain manual-review cases rather than being forced into an approve/decline label.
+
+## 5.2 Current limits
+
+This first intake path does not yet save mapping profiles, persist pilot data,
+or import a bank-specific pilot policy. Validated rows can be passed to the Model lab without raw PAN.
+It does not establish
+HDFC policy or performance. The public demonstration PAN key is labelled **DEMO KEY** in the app; setting
+`APEX_MODE=pilot_sandbox` requires a private `APEX_PAN_SALT` key at startup. That switch only enforces
+key handling; the bank-specific policy sandbox is not built yet. Real customer data must not be used in
+this prototype or committed to its repository.

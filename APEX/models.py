@@ -134,6 +134,7 @@ class ApplicantInput(BaseModel):
     # A. Personal and loan information
     applicant_id: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
     age: Optional[int] = Field(default=None, ge=18, le=100)
+    date_of_birth: Optional[date] = None
     employment_category: Optional[EmploymentCategory] = None
     requested_amount: float = Field(gt=0, le=1e9)
     tenure_months: int = Field(gt=0, le=480)
@@ -168,7 +169,7 @@ class ApplicantInput(BaseModel):
 
     # E. KYC - PAN. Held as a secret: masked in every dump, never scored.
     pan: Optional[SecretStr] = None
-    pan_consent: bool = Field(default=False, description="Customer consent to collect/verify PAN (DPDP Act)")
+    pan_consent: bool = Field(default=False, description="Customer consent to collect/verify PAN")
     pan_status: PanStatus = PanStatus.NOT_VERIFIED
 
     # F. Credit bureau (from a consented bureau report, entered manually in v2)
